@@ -1,0 +1,6 @@
+{
+  "name": "Colour Puzzle",
+  "description": "Tablet-optimised colour sorting puzzle game featuring 100 guaranteed-solvable levels, fluid pouring animations, hints, undo, and daily challenges.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
