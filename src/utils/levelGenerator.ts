@@ -95,8 +95,9 @@ export function generateSolvableLevel(options: {
     }
     if (alreadyHasSolved) continue;
 
-    // 5. Test solvability with the solver
-    const solution = solvePuzzle(tubes, capacity, 3000);
+    // 5. Test solvability with the solver using an efficient state limit
+    const maxSearchStates = Math.min(1000, 300 + colorCount * 80);
+    const solution = solvePuzzle(tubes, capacity, maxSearchStates);
     if (solution && solution.length >= 3) {
       return {
         levelId,
