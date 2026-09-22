@@ -449,23 +449,132 @@ export default function App() {
     loadLevel(1, 'classic');
   }, [loadLevel]);
 
-  // Dynamically split tubes into clean tablet rows (Landscape prioritized)
+  // Track viewport dimensions to guarantee the puzzle is 100% in full view without scrolling
+  const [viewport, setViewport] = useState(() => ({
+    width: typeof window !== 'undefined' ? window.innerWidth : 1024,
+    height: typeof window !== 'undefined' ? window.innerHeight : 768,
+    isLandscape: typeof window !== 'undefined' ? window.innerWidth > window.innerHeight : true,
+  }));
+
+  useEffect(() => {
+    const handleResize = () => {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      setViewport({
+        width: w,
+        height: h,
+        isLandscape: w > h,
+      });
+    };
+    window.addEventListener('resize', handleResize);
+    window.addEventListener('orientationchange', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('orientationchange', handleResize);
+    };
+  }, []);
+
+  // Dynamically split tubes into optimal rows based on orientation and tube count
   const tubeRows = useMemo(() => {
     const total = tubes.length;
-    if (total <= 6) {
-      // 1 row if 6 or fewer
+
+    // In Landscape:
+    if (viewport.isLandscape) {
+      // 8 or fewer tubes fit beautifully in 1 row on landscape viewports >= 560px
+      if (total <= 8 && viewport.width >= 560) {
+        return [tubes.map((_, idx) => idx)];
+      }
+      // 9+ tubes: 2 balanced rows
+      const half = Math.ceil(total / 2);
+      const row1: number[] = [];
+      const row2: number[] = [];
+      for (let i = 0; i < total; i++) {
+        if (i < half) row1.push(i);
+        else row2.push(i);
+      }
+      return [row1, row2];
+    }
+
+    // In Portrait:
+    if (total <= 5) {
       return [tubes.map((_, idx) => idx)];
     }
-    // 2 balanced rows for tablet
-    const half = Math.ceil(total / 2);
+    if (total <= 9) {
+      const half = Math.ceil(total / 2);
+      const row1: number[] = [];
+      const row2: number[] = [];
+      for (let i = 0; i < total; i++) {
+        if (i < half) row1.push(i);
+        else row2.push(i);
+      }
+      return [row1, row2];
+    }
+    // 10+ tubes in portrait: 3 balanced rows
+    const third = Math.ceil(total / 3);
     const row1: number[] = [];
     const row2: number[] = [];
+    const row3: number[] = [];
     for (let i = 0; i < total; i++) {
-      if (i < half) row1.push(i);
-      else row2.push(i);
+      if (i < third) row1.push(i);
+      else if (i < third * 2) row2.push(i);
+      else row3.push(i);
     }
-    return [row1, row2];
-  }, [tubes]);
+    return [row1, row2, row3];
+  }, [tubes, viewport.isLandscape, viewport.width]);
+
+  // Compute exact tube dimensions so the entire board ALWAYS fits the screen without scrolling
+  const tubeDimensions = useMemo(() => {
+    const rowCount = tubeRows.length;
+    const maxTubesInRow = Math.max(...tubeRows.map((r) => r.length), 1);
+
+    // Header & footer vertical allowance
+    const headerHeight = viewport.isLandscape ? 40 : 76;
+    const footerHeight = viewport.isLandscape ? 38 : 52;
+    const paddingY = viewport.isLandscape ? 12 : 16;
+    const availableHeight = Math.max(140, viewport.height - headerHeight - footerHeight - paddingY);
+    const availableWidth = Math.max(280, viewport.width - 20);
+
+    // Vertical row gap
+    const gapY = rowCount > 1 ? (viewport.isLandscape && viewport.height < 500 ? 6 : 12) : 0;
+    const totalGapsY = (rowCount - 1) * gapY;
+    // Clearance for tube selection/hover lift and tube number label
+    const liftAndLabelClearance = (viewport.height < 450 ? 20 : 28) * rowCount;
+    const usableHeightPerRow = Math.max(65, (availableHeight - totalGapsY - liftAndLabelClearance) / rowCount);
+
+    // Horizontal spacing allowance
+    const gapX = maxTubesInRow > 7 ? 6 : 10;
+    const totalGapsX = (maxTubesInRow - 1) * gapX;
+    const usableWidthPerTube = Math.max(28, (availableWidth - totalGapsX) / maxTubesInRow);
+
+    // Standard aspect ratio for a 4-capacity tube is ~ 1 : 2.7 to 1 : 3.1
+    let height = Math.min(usableHeightPerRow, usableWidthPerTube * 3.1);
+
+    // Clamp height based on viewport
+    if (viewport.isLandscape) {
+      if (viewport.height < 400) {
+        // Mobile phone landscape (360px - 390px)
+        height = rowCount === 1 ? Math.min(height, 175) : Math.min(height, 112);
+      } else if (viewport.height < 550) {
+        // Larger mobile or small tablet landscape
+        height = rowCount === 1 ? Math.min(height, 205) : Math.min(height, 142);
+      } else {
+        // Tablet / Desktop landscape
+        height = rowCount === 1 ? Math.min(height, 240) : Math.min(height, 215);
+      }
+    } else {
+      // Portrait
+      if (viewport.height < 700) {
+        height = rowCount <= 2 ? Math.min(height, 160) : Math.min(height, 115);
+      } else {
+        height = rowCount <= 2 ? Math.min(height, 220) : Math.min(height, 150);
+      }
+    }
+
+    height = Math.max(80, Math.round(height));
+    const width = Math.max(32, Math.round(Math.min(usableWidthPerTube, height / 2.72)));
+
+    return { height, width, gapY };
+  }, [tubeRows, viewport]);
 
   return (
     <div className="relative w-screen h-screen flex flex-col justify-between overflow-hidden bg-gradient-to-b from-slate-950 via-[#0B132B] to-slate-950 font-['Plus_Jakarta_Sans'] select-none">
@@ -501,24 +610,27 @@ export default function App() {
 
       {/* Hint Alert Banner */}
       {hint && (
-        <div className="absolute top-16 inset-x-0 z-25 flex justify-center px-4 pointer-events-none animate-fade-in">
-          <div className="bg-amber-950/90 border border-amber-400/60 text-amber-200 text-xs sm:text-sm font-bold px-4 py-1.5 rounded-full shadow-lg shadow-amber-950/40 flex items-center gap-2">
+        <div className="absolute top-12 sm:top-14 landscape:top-11 lg:top-14 inset-x-0 z-25 flex justify-center px-4 pointer-events-none animate-fade-in">
+          <div className="bg-amber-950/90 border border-amber-400/60 text-amber-200 text-xs sm:text-sm font-bold px-4 py-1 rounded-full shadow-lg shadow-amber-950/40 flex items-center gap-2">
             <span>💡</span>
             <span>{hint.message}</span>
           </div>
         </div>
       )}
 
-      {/* 2. Main Puzzle Area (Tubes Grid) */}
+      {/* 2. Main Puzzle Area (Tubes Grid) - Guaranteed 100% in full view without scrolling */}
       <main
         id="puzzle-board"
-        className="flex-1 w-full max-w-6xl mx-auto px-4 sm:px-8 py-2 sm:py-6 flex flex-col justify-center items-center z-10 overflow-y-auto"
+        className="flex-1 w-full max-w-7xl mx-auto px-2 sm:px-6 py-1 sm:py-2 flex flex-col justify-center items-center z-10 overflow-hidden min-h-0"
       >
-        <div className="flex flex-col items-center justify-center gap-4 sm:gap-8 w-full">
+        <div
+          className="flex flex-col items-center justify-center w-full min-h-0"
+          style={{ gap: `${tubeDimensions.gapY}px` }}
+        >
           {tubeRows.map((rowIndices, rowIdx) => (
             <div
               key={`row-${rowIdx}`}
-              className="flex flex-wrap items-center justify-center gap-3 sm:gap-6 md:gap-8"
+              className="flex items-center justify-center gap-1.5 sm:gap-2.5 md:gap-4 shrink-0"
             >
               {rowIndices.map((tubeIndex) => (
                 <TubeView
@@ -537,6 +649,8 @@ export default function App() {
                   highContrast={settings.highContrast}
                   onSelect={handleTubeSelect}
                   reducedMotion={settings.reducedMotion}
+                  tubeHeight={tubeDimensions.height}
+                  tubeWidth={tubeDimensions.width}
                 />
               ))}
             </div>
