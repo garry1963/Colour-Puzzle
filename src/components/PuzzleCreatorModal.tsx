@@ -692,7 +692,7 @@ export const PuzzleCreatorModal: React.FC<PuzzleCreatorModalProps> = ({
                               }}
                               className={`relative flex-1 w-full rounded-sm flex items-center justify-center transition-all ${
                                 colorInfo
-                                  ? `bg-gradient-to-r ${colorInfo.gradient} border-t border-white/20 shadow-inner`
+                                  ? 'border-t border-white/20'
                                   : 'border-t border-dashed border-slate-800/60 hover:bg-white/5'
                               }`}
                               style={colorInfo ? { backgroundColor: colorInfo.hex } : undefined}

@@ -130,22 +130,23 @@ export const TubeView: React.FC<TubeViewProps> = ({
 
             const color = getColour(colorId);
             const isTopLiquid = slotIdx === tube.length - 1;
+            const hasBlockAbove = slotIdx < tube.length - 1;
+            const isDifferentColorAbove = hasBlockAbove && tube[slotIdx + 1] !== colorId;
 
             return (
               <div
                 key={`block-${slotIdx}-${colorId}`}
-                className={`relative flex-1 w-full flex items-center justify-center transition-all duration-300 bg-gradient-to-r ${color.gradient} shadow-inner border-t border-white/20`}
+                className={`relative flex-1 w-full flex items-center justify-center transition-all duration-300 ${
+                  isDifferentColorAbove ? 'border-t border-black/20' : ''
+                }`}
                 style={{
                   backgroundColor: color.hex,
                 }}
               >
-                {/* Meniscus / Fluid Curved Top on the uppermost liquid unit */}
+                {/* Surface line on top layer */}
                 {isTopLiquid && (
-                  <div className="absolute top-0 inset-x-0 h-2 bg-gradient-to-b from-white/40 via-white/10 to-transparent rounded-t-full pointer-events-none" />
+                  <div className="absolute top-0 inset-x-0 h-0.5 bg-white/30 pointer-events-none" />
                 )}
-
-                {/* Subsurface Liquid Shimmer */}
-                <div className="absolute inset-y-0 left-0 w-2/5 bg-gradient-to-r from-white/20 to-transparent pointer-events-none" />
 
                 {/* Accessibility Overlays */}
                 {colorBlindMode === 'patterns' && (
