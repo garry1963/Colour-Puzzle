@@ -78,11 +78,32 @@ export default function App() {
   const [elapsedTimeSeconds, setElapsedTimeSeconds] = useState<number>(0);
   const [levelSolveTime, setLevelSolveTime] = useState<number>(0);
 
-  // Today's Date String for Daily Challenge
-  const todayDateStr = useMemo(() => {
+  // Helper to get active calendar date (YYYY-MM-DD)
+  const getTodayDateStr = useCallback(() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }, []);
+
+  // Today's Date String for Daily Challenge with automatic date shift detection
+  const [todayDateStr, setTodayDateStr] = useState<string>(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  });
+
+  // Check for date shift periodically (e.g. crossing midnight)
+  useEffect(() => {
+    const checkDate = () => {
+      const current = getTodayDateStr();
+      setTodayDateStr((prev) => (prev !== current ? current : prev));
+    };
+    const timer = setInterval(checkDate, 15000);
+    return () => clearInterval(timer);
+  }, [getTodayDateStr]);
+
+  // Today's unique daily puzzle preview
+  const todayDailyPuzzle = useMemo(() => {
+    return generateDailyPuzzle(todayDateStr);
+  }, [todayDateStr]);
 
   // Update sound engine when settings change
   useEffect(() => {
@@ -602,7 +623,10 @@ export default function App() {
         currentStreak={playerStats.currentStreak}
         isDailyCompletedToday={Boolean(dailyProgress[todayDateStr]?.completed)}
         onOpenLevelSelect={() => setIsLevelSelectOpen(true)}
-        onOpenDaily={() => setIsDailyOpen(true)}
+        onOpenDaily={() => {
+          setTodayDateStr(getTodayDateStr());
+          setIsDailyOpen(true);
+        }}
         onOpenStats={() => setIsStatsOpen(true)}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenTutorial={() => setIsTutorialOpen(true)}
@@ -730,6 +754,7 @@ export default function App() {
         isOpen={isDailyOpen}
         dateStr={todayDateStr}
         record={dailyProgress[todayDateStr]}
+        levelPreview={todayDailyPuzzle}
         currentStreak={playerStats.currentStreak}
         maxStreak={playerStats.maxStreak}
         onPlayDaily={() => {

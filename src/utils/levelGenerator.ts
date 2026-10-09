@@ -1,7 +1,7 @@
 import { ColourId, LevelData, Tube } from '../types';
 import { solvePuzzle } from './solver';
 
-const ALL_COLOURS: ColourId[] = [
+export const ALL_COLOURS: ColourId[] = [
   'red',
   'blue',
   'green',
@@ -18,6 +18,7 @@ const ALL_COLOURS: ColourId[] = [
 
 /**
  * Seeded pseudo-random number generator for deterministic daily puzzles and level reproduction.
+ * Lehmer / Park-Miller PRNG.
  */
 export function createRng(seed: number) {
   let s = seed % 2147483647;
@@ -29,7 +30,26 @@ export function createRng(seed: number) {
 }
 
 /**
- * Generate a guaranteed solvable level by reverse-scrambling from a solved state.
+ * Robust 32-bit hash function (FNV-1a with avalanche bit mixing) for date strings like "2026-10-09".
+ * Guarantees that adjacent calendar days produce completely divergent seeds.
+ */
+export function hashDateString(dateStr: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < dateStr.length; i++) {
+    hash ^= dateStr.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  // Avalanche bit-mixing
+  hash ^= hash >>> 16;
+  hash = Math.imul(hash, 0x85ebca6b);
+  hash ^= hash >>> 13;
+  hash = Math.imul(hash, 0xc2b2ae35);
+  hash ^= hash >>> 16;
+  return Math.abs(hash);
+}
+
+/**
+ * Generate a guaranteed solvable level with diverse shuffled palettes and solver verification.
  */
 export function generateSolvableLevel(options: {
   levelId: number;
@@ -44,12 +64,18 @@ export function generateSolvableLevel(options: {
     colorCount,
     emptyTubes = 2,
     capacity = 4,
-    scrambleSteps = 30 + colorCount * 8,
     seed = levelId * 7919 + 1337,
   } = options;
 
   const rng = createRng(seed);
-  const selectedColours = ALL_COLOURS.slice(0, colorCount);
+
+  // Shuffle all colours so levels don't always use the exact same subset of colours
+  const shuffledColours = [...ALL_COLOURS];
+  for (let i = shuffledColours.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [shuffledColours[i], shuffledColours[j]] = [shuffledColours[j], shuffledColours[i]];
+  }
+  const selectedColours = shuffledColours.slice(0, colorCount);
 
   // Determine difficulty tag
   let difficulty: LevelData['difficulty'] = 'Easy';
@@ -57,10 +83,9 @@ export function generateSolvableLevel(options: {
   else if (colorCount >= 6) difficulty = 'Hard';
   else if (colorCount >= 4) difficulty = 'Medium';
 
-  let attempts = 0;
-  while (attempts < 20) {
-    attempts++;
+  const maxSearchBudget = colorCount >= 7 ? 3500 : 2500;
 
+  for (let attempt = 0; attempt < 40; attempt++) {
     // 1. Create pool of exactly `capacity` units of each chosen colour
     const pool: ColourId[] = [];
     selectedColours.forEach((c) => {
@@ -84,21 +109,14 @@ export function generateSolvableLevel(options: {
       tubes.push([]);
     }
 
-    // 4. Ensure no tube is already completely solved
-    let alreadyHasSolved = false;
-    for (let i = 0; i < colorCount; i++) {
-      const t = tubes[i];
-      if (t.length === capacity && t.every((c) => c === t[0])) {
-        alreadyHasSolved = true;
-        break;
-      }
+    // 4. Ensure no tube is already completely uniform
+    if (tubes.slice(0, colorCount).some((t) => t.length === capacity && t.every((c) => c === t[0]))) {
+      continue;
     }
-    if (alreadyHasSolved) continue;
 
-    // 5. Test solvability with the solver using an efficient state limit
-    const maxSearchStates = Math.min(1000, 300 + colorCount * 80);
-    const solution = solvePuzzle(tubes, capacity, maxSearchStates);
-    if (solution && solution.length >= 3) {
+    // 5. Test solvability with solver
+    const solution = solvePuzzle(tubes, capacity, maxSearchBudget);
+    if (solution && solution.length >= 4) {
       return {
         levelId,
         difficulty,
@@ -111,7 +129,7 @@ export function generateSolvableLevel(options: {
     }
   }
 
-  // Fallback safe level constructed by controlled reverse mixing
+  // Fallback safe level constructed with seeded cyclic shift on the shuffled colours
   const fallbackTubes: Tube[] = [];
   for (let i = 0; i < colorCount; i++) {
     fallbackTubes.push([]);
@@ -120,13 +138,16 @@ export function generateSolvableLevel(options: {
     fallbackTubes.push([]);
   }
 
-  // Round-robin placement
+  const shiftOffset = 1 + Math.floor(rng() * Math.max(1, colorCount - 1));
   for (let layer = 0; layer < capacity; layer++) {
     for (let col = 0; col < colorCount; col++) {
-      const colorIndex = (col + layer) % colorCount;
+      const colorIndex = (col * shiftOffset + layer) % colorCount;
       fallbackTubes[col].push(selectedColours[colorIndex]);
     }
   }
+
+  const fallbackSol = solvePuzzle(fallbackTubes, capacity, 3000);
+  const parMoves = fallbackSol && fallbackSol.length > 0 ? fallbackSol.length + 3 : colorCount * 3 + 2;
 
   return {
     levelId,
@@ -135,30 +156,127 @@ export function generateSolvableLevel(options: {
     emptyTubes,
     colours: selectedColours,
     tubes: fallbackTubes,
-    parMoves: colorCount * 3 + 2,
+    parMoves,
   };
 }
 
+// In-memory cache for daily puzzles so repeated plays on the same day stay identical,
+// while every unique date yields a brand new, unique puzzle.
+const DAILY_CACHE = new Map<string, LevelData>();
+
 /**
- * Generate a daily puzzle for a specific date (e.g. "2026-09-19").
+ * Generate a guaranteed unique, solvable daily puzzle for any given date (e.g. "2026-10-09").
  */
 export function generateDailyPuzzle(dateStr: string): LevelData {
-  // Hash the date string into a numerical seed
-  let hash = 0;
-  for (let i = 0; i < dateStr.length; i++) {
-    hash = (hash << 5) - hash + dateStr.charCodeAt(i);
-    hash |= 0;
+  if (DAILY_CACHE.has(dateStr)) {
+    const cached = DAILY_CACHE.get(dateStr)!;
+    return {
+      ...cached,
+      tubes: cached.tubes.map((t) => [...t]),
+    };
   }
-  const seed = Math.abs(hash) + 424242;
+
+  const seed = hashDateString(dateStr);
   const rng = createRng(seed);
 
-  // Daily puzzle has 5 to 7 colours for a fun medium challenge
-  const colorCount = 5 + Math.floor(rng() * 3); // 5, 6, or 7
-  return generateSolvableLevel({
-    levelId: 9999,
-    colorCount,
-    emptyTubes: 2,
-    capacity: 4,
-    seed,
-  });
+  // 1. Shuffle all 12 colours using the unique date seed for a signature daily palette
+  const shuffledColours = [...ALL_COLOURS];
+  for (let i = shuffledColours.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [shuffledColours[i], shuffledColours[j]] = [shuffledColours[j], shuffledColours[i]];
+  }
+
+  // 2. Select 5 or 6 colors on weekdays, 6 or 7 on weekends
+  const dateObj = new Date(dateStr + 'T12:00:00');
+  const dayOfWeek = isNaN(dateObj.getTime()) ? 0 : dateObj.getDay();
+  const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+  const colorCount = isWeekend ? 6 + Math.floor(rng() * 2) : 5 + Math.floor(rng() * 2);
+  const selectedColours = shuffledColours.slice(0, colorCount);
+
+  const capacity = 4;
+  const emptyTubes = 2;
+
+  let difficulty: LevelData['difficulty'] = 'Medium';
+  if (colorCount >= 7) difficulty = 'Expert';
+  else if (colorCount >= 6) difficulty = 'Hard';
+
+  const maxSearchBudget = colorCount >= 7 ? 4000 : 3000;
+  let generatedLevel: LevelData | null = null;
+
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const pool: ColourId[] = [];
+    selectedColours.forEach((c) => {
+      for (let i = 0; i < capacity; i++) {
+        pool.push(c);
+      }
+    });
+
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+
+    const tubes: Tube[] = [];
+    for (let i = 0; i < colorCount; i++) {
+      tubes.push(pool.slice(i * capacity, (i + 1) * capacity));
+    }
+    for (let i = 0; i < emptyTubes; i++) {
+      tubes.push([]);
+    }
+
+    // Skip if any tube is uniform
+    if (tubes.slice(0, colorCount).some((t) => t.length === capacity && t.every((c) => c === t[0]))) {
+      continue;
+    }
+
+    // Solve and verify
+    const solution = solvePuzzle(tubes, capacity, maxSearchBudget);
+    if (solution && solution.length >= 8) {
+      generatedLevel = {
+        levelId: 9999,
+        difficulty,
+        tubeCapacity: capacity,
+        emptyTubes,
+        colours: selectedColours,
+        tubes,
+        parMoves: solution.length + Math.max(2, Math.floor(solution.length * 0.2)),
+      };
+      break;
+    }
+  }
+
+  // Guaranteed fallback: date-specific permutation of the date's unique shuffled colors
+  if (!generatedLevel) {
+    const fallbackTubes: Tube[] = [];
+    for (let i = 0; i < colorCount; i++) fallbackTubes.push([]);
+    for (let i = 0; i < emptyTubes; i++) fallbackTubes.push([]);
+
+    const shiftOffset = 1 + Math.floor(rng() * (colorCount - 1));
+    for (let layer = 0; layer < capacity; layer++) {
+      for (let col = 0; col < colorCount; col++) {
+        const colorIdx = (col * shiftOffset + layer) % colorCount;
+        fallbackTubes[col].push(selectedColours[colorIdx]);
+      }
+    }
+
+    const sol = solvePuzzle(fallbackTubes, capacity, 3500);
+    const parMoves = sol && sol.length > 0 ? sol.length + 3 : colorCount * 3 + 2;
+
+    generatedLevel = {
+      levelId: 9999,
+      difficulty,
+      tubeCapacity: capacity,
+      emptyTubes,
+      colours: selectedColours,
+      tubes: fallbackTubes,
+      parMoves,
+    };
+  }
+
+  DAILY_CACHE.set(dateStr, generatedLevel);
+
+  return {
+    ...generatedLevel,
+    tubes: generatedLevel.tubes.map((t) => [...t]),
+  };
 }

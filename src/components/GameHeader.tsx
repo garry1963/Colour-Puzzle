@@ -165,7 +165,7 @@ export const GameHeader: React.FC<GameHeaderProps> = ({
             </div>
             <span className="text-[10px] sm:text-xs text-slate-400 hidden sm:inline leading-tight">
               {mode === 'daily'
-                ? 'Daily Challenge'
+                ? `Daily Challenge • ${difficulty} • Par: ${parMoves}`
                 : mode === 'custom'
                 ? `Custom Puzzle • Par: ${parMoves}`
                 : `${difficulty} • Par: ${parMoves}`}
